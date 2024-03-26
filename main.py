@@ -5,6 +5,7 @@ from PIL import Image
 import random
 
 fullJSON = {}
+pathIDs = {}
 
 def convertScene(fileName):
     # Variables
@@ -120,26 +121,52 @@ def convertPosition(pos, ogscreensize, screensize, offset):
     return(round(((pos / ogscreensize) * screensize) - offset))
 
 def convertObjectReference(line, nodesJSON):
-    if len(line[1:len(line)].split(".")[0].split("/")) > 0:
-        modifiedNode = "./" + line[1:len(line)].split(".")[0].split("/")[0]
+    if line[:2] == '$"':
+        reconstructedLine = ""
+        for x in line.split(" = ")[0].split("."):
+            if x == line.split(" = ")[0].split(".")[0]:
+                reconstructedLine = reconstructedLine + "$" + line.split(" = ")[0].split(".")[0][2:-1] + "."
+            elif x == line.split(" = ")[0].split(".")[len(line.split(" = ")[0].split(".")) - 1]:
+                reconstructedLine = reconstructedLine + x
+            else:
+                reconstructedLine = reconstructedLine + x + "."
     else:
-        modifiedNode = line[1:len(line)].split(".")[0].split("/")[len(line[1:len(line)].split(".")[0].split("/")) - 1] + "/" + line[1:len(line)].split(".")[0].split("/")[len(line[1:len(line)].split(".")[0].split("/"))]
+        reconstructedLine = line
+    if len(reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/")) > 0:
+        modifiedNode = "./" + reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/")[0]
+    else:
+        modifiedNode = reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/")[len(reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/")) - 1] + "/" + reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/")[len(reconstructedLine[1:len(reconstructedLine)].split(".")[0].split("/"))]
+    print(nodesJSON)
     random.seed(nodesJSON[modifiedNode]["name"])
     nodeCount = round(random.random() * 9999)
     nodeName = nodesJSON[modifiedNode]["type"] + str(nodeCount)
-    objectReference = line[1:len(line)].split(" = ")[0].split(".")
+    if nodesJSON[modifiedNode]["type"] == "Camera2D":
+        nodeName = "camera"
+    objectReference = reconstructedLine[1:len(reconstructedLine)].split(" = ")[0].split(".")
     resconstructedObjectReference = ""
     for x in objectReference:
-        if not x == objectReference[0] and not x == objectReference[-1]:
-            resconstructedObjectReference = resconstructedObjectReference + x + "_"
-        elif x == objectReference[-1]:
-            resconstructedObjectReference = resconstructedObjectReference + x
+        if not nodeName == "camera":
+            if not x == objectReference[0] and not x == objectReference[-1]:
+                resconstructedObjectReference = resconstructedObjectReference + x + "_"
+            elif x == objectReference[-1]:
+                resconstructedObjectReference = resconstructedObjectReference + x
+        else:
+            if x == "x" or x == "y":
+                resconstructedObjectReference = resconstructedObjectReference + x
     return(nodeName + "_" + resconstructedObjectReference)
 
 def convertFunction(x):
     func = ""
     if x.split("(")[0] == "len":
         func = func + "string." + x
+    elif x.split("(")[0] == "load" or x.split("(")[0] == "preload":
+        func = x.split("(")[1][1:-2]
+        if func[len(func) - 3:len(func)] == "svg":
+            func = func[:-3] + "png"
+        print(pathIDs)
+        func = pathIDs[func]
+    elif x.split("(")[0] == "range":
+        func = x
     else:
         func = '""'
     return(func)
@@ -181,9 +208,10 @@ def convertScript(scriptFile, scriptNode, nodesJSON):
                 functions[currentFunction.split("(")[0]] = ""
                 declaringFunction = True
             elif line[:1] == "$":
-                print(line)
-                nodeName = convertObjectReference(line, nodesJSON)
-                print(nodeName)
+                print(line.split(" = ")[0].split(".")[0][2:-1])
+                nodeName = convertObjectReference(line.split(" = ")[0], nodesJSON)
+                if nodeName == "camera_":
+                    nodeName = "camera"
                 if len(line.split(" = ")) > 1:
                     transformType = line.split(" = ")[0].split(".")[1]
                     print(transformType)
@@ -198,16 +226,21 @@ def convertScript(scriptFile, scriptNode, nodesJSON):
                         transformX = transformValue[8:len(transformValue) - 1].split(", ")[0]
                         transformY = transformValue[8:len(transformValue) - 1].split(", ")[1]
                         if not transformX.isnumeric():
+                            reconstructedTransformX = ""
                             for x in transformX.split(" "):
-                                reconstructedTransformX = ""
                                 if x.isnumeric():
-                                    reconstructedTransformX = reconstructedTransformX + str(convertPosition(int(x), 1152, 341, 42.5))
+                                    if reconstructedTransformX[len(reconstructedTransformX) - 2:len(reconstructedTransformX)] == "+ ":
+                                        reconstructedTransformX = reconstructedTransformX + x
+                                    else:
+                                        reconstructedTransformX = reconstructedTransformX + str(convertPosition(int(x), 1152, 341, 42.5))
+                                    print("SHIIITTTTTOTUTTTT")
                                 else:
                                     if x[:1] == "$":
                                         reconstructedTransformX = convertObjectReference(x, nodesJSON)
                                     else:
                                         reconstructedTransformX = reconstructedTransformX + x
-                            print(reconstructedTransformX, "YEAHHHHHHHHHHHHHHHHHHHHHHHHHHHH")
+                                if not x == transformX.split(" ")[len(transformX.split(" ")) - 1]:
+                                    reconstructedTransformX = reconstructedTransformX + " "
                             transformX = reconstructedTransformX
                         else:
                             transformX = str(convertPosition(int(transformX), 1152, 341, 42.5))
@@ -249,6 +282,10 @@ def convertScript(scriptFile, scriptNode, nodesJSON):
                         compiliedLine = nodeName + " = " + transformValue
                 elif transformType == "visible":
                     compiliedLine = nodeName + " = " + transformValue
+                elif transformType == "frame":
+                    compiliedLine = nodeName + " = " + transformValue
+                elif transformType == "texture":
+                    compiliedLine = nodeName + " = " + convertFunction(transformValue)
             elif line[:3] == "var":
                 variableValue = line[4:len(line)].split(" = ")[1]
                 if variableValue[:8] == "Vector2(":
@@ -263,12 +300,6 @@ def convertScript(scriptFile, scriptNode, nodesJSON):
                     compiliedLine = line[4:len(line)]
                 variables[compiliedLine.split(" = ")[0]] = ""
             elif line[:2] == "if" or line[:5] == "while" or line[:3] == "for":
-                if len(ifLevels) > 0:
-                    tabs = ifLevels[-1]
-                    print(ifLevels)
-                    ifLevels.pop()
-                    print(ifLevels, len(ifLevels))
-                    code.append(tabs + "end")
                 ifLevels.append(tabs)
                 ifSplit = line.split(" ")
                 Condition = ""
@@ -363,9 +394,21 @@ def convertScript(scriptFile, scriptNode, nodesJSON):
                         code.append(tabs + x)
 
             if newlines == 0 and declaringFunction and not line[:5] == "func ":
+                if len(ifLevels) > 0:
+                    tabs = ifLevels[-1]
+                    print(ifLevels)
+                    ifLevels.pop()
+                    print(ifLevels, len(ifLevels))
+                    code.append(tabs + "end")
                 declaringFunction = False
                 code.append("end\n")
             if line == "" and declaringFunction and not line[:5] == "func ":
+                if len(ifLevels) > 0:
+                    tabs = ifLevels[-1]
+                    print(ifLevels)
+                    ifLevels.pop()
+                    print(ifLevels, len(ifLevels))
+                    code.append(tabs + "end")
                 declaringFunction = False
                 code.append("end\n")
         return(code)
@@ -380,14 +423,6 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
 
     resourcesJSON = json.loads(fullJSON["convertedScene"])["resources"]
     nodesJSON = json.loads(fullJSON["convertedScene"])["nodes"]
-
-    for n in json.loads(fullJSON["convertedScene"])["nodes"]:
-        if json.loads(fullJSON["convertedScene"])["nodes"][n]["parent"] == "root":
-            rootNode = n
-    if "script" in json.loads(fullJSON["convertedScene"])["nodes"][rootNode]:
-        scriptPath = resourcesJSON[json.loads(fullJSON["convertedScene"])["nodes"][rootNode]["script"][13:-2]]["path"]
-        script = convertScript(gameFolder + "/" + scriptPath[6:len(scriptPath)], json.loads(fullJSON["convertedScene"])["nodes"][rootNode], nodesJSON)
-        print(script)
     
     resourcesCompilied = []
     nodePosXCompiled = []
@@ -425,13 +460,15 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
         print(str(resourcesJSON))
         print(r)
         path = str(resourcesJSON[r]["path"])
-        if path[len(path) - 3:len(path)].lower() == "png" or path[len(path) - 3:len(path)].lower() == "svg":
+        if path[len(path) - 3:len(path)].lower() == "png" or path[len(path) - 3:len(path)].lower() == "svg" or path[len(path) - 3:len(path)].lower() == "jpg":
             resourceCount = resourceCount + 1
             resourceName = "res" + str(resourceCount)
             renamedResourceIDs[r] = resourceName
+            pathIDs[path[6:len(path) - 3] + "png"] = resourceName
+            print(pathIDs, "GTRRRRRRRRRRRRRRRGGGGGGGGGAAAAAAAAHHHHHHHHHHHHHHHH")
             resourcesCompilied.append(resourceName + " = " + 'Image.load("' + path[6:len(path) - 3] + 'png", VRAM)\n')
             print(path[len(path) - 3:len(path)])
-            if path[len(path) - 3:len(path)].lower() == "png":
+            if not path[len(path) - 3:len(path)].lower() == "svg":
                 print(path[len(path) - 3:len(path)])
                 resourcePaths[r] = compiliedDirectory + "/" + path[6:len(path)]
                 pathFixed = ""
@@ -443,16 +480,14 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
                 checkingPath = ""
                 for x in pathFixed[1:len(pathFixed)].split("/"):
                     checkingPath = checkingPath + x + "/"
-                    print(checkingPath)
                     if not os.path.exists(checkingPath):
                         os.mkdir(checkingPath)
-                shutil.copyfile(gameFolder + "/" + path[6:len(path)], resourcePaths[r])
                 selectedImage = Image.open(gameFolder + "/" + path[6:len(path)])
                 w, h = selectedImage.size
                 aspectRatio = w / h
                 newH = round(compressionMinimum / aspectRatio)
                 resizedImage = selectedImage.resize((compressionMinimum, newH))
-                resizedImage.save(resourcePaths[r])
+                resizedImage.save(resourcePaths[r][:-3] + "png")
 
     for o in nodesJSON:
         random.seed(nodesJSON[o]["name"])
@@ -476,12 +511,15 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
                 position = nodesJSON[o]["position"][8:-1]
             else:
                 position = "0, 0"
+            x = convertPosition(int(float(position.split(", ")[0])), 1152, 341, 42.5)
+            y = convertPosition(int(float(position.split(", ")[1])), 648, 192, 0)
             if "scale" in nodesJSON[o]:
                 scale = nodesJSON[o]["scale"][8:-1]
             else:
                 scale = "1, 1"
+            print(resourcePaths, "YEEEEEEEE HOWWWWWWWWWWWWWWWWWWWWWWWWWWW")
             if texture in resourcePaths:
-                textureImage = Image.open(resourcePaths[texture])
+                textureImage = Image.open(resourcePaths[texture][:-3] + "png")
                 selectedImage = Image.open(gameFolder + "/" + path[6:len(path)])
             else:
                 textureImage = Image.open(compiliedDirectory + "/" + "Icon.png")
@@ -494,8 +532,6 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
             else:
                 fixedw = ogw
                 fixedh = ogh
-            x = convertPosition(int(float(position.split(", ")[0])), 1152, 341, 42.5)
-            y = convertPosition(int(float(position.split(", ")[1])), 648, 192, 0)
             if not fixedw == ogw:
                 scalex = float(scale.split(", ")[0])
                 scaley = float(scale.split(", ")[1])
@@ -506,16 +542,45 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
             nodePosYCompiled.append(nodeName + "_position_y = " + str(y) + "\n")
             nodePosXCompiled.append(nodeName + "_scale_x = " + str(scalex) + "\n")
             nodePosYCompiled.append(nodeName + "_scale_y = " + str(scaley) + "\n")
-            nodePosXDisplay = "(" + nodeName + "_position_x + camera_x) - " + str((fixedw * scalex) / 2)
-            nodePosYDisplay = "(" + nodeName + "_position_y + camera_y) - " + str((fixedh * scaley) / 2)
-            nodePosScaleXDisplay = nodeName + "_scale_x"
-            nodePosScaleYDisplay = nodeName + "_scale_y"
-            print(nodesJSON[o])
-            nodesCompilied.append(tabs + "screen.blit(" + "SCREEN_DOWN" + ", " + nodePosXDisplay + ", " + nodePosYDisplay + ", " + renamedResourceIDs[texture] + ")")
-            if extendScreen:
-                nodesCompilied.append(tabs + "screen.blit(" + "SCREEN_UP" + ", " + nodePosXDisplay + " - 256, " + nodePosYDisplay + " - 192, " + renamedResourceIDs[texture] + ")")
-            # nodesCompilied.append(tabs + "Image.scale(" + renamedResourceIDs[texture] + ", " + str(round(fixedw)) + " * " + str(nodePosScaleXDisplay) + ", " + str(round(fixedh))  + " * " + str(nodePosScaleYDisplay) + ")")
-            nodesCompilied.append(tabs + "Image.scale(" + renamedResourceIDs[texture] + ", " + str(fixedw * scalex) + ", " + str(fixedh * scaley) + ")")
+            if "hframes" in nodesJSON[o]:
+                if "frame" in nodesJSON[o]:
+                    nodePosXCompiled.append(nodeName + "_frame = " + str(nodesJSON[o]["frame"]) + "\n")
+                else:
+                    nodePosXCompiled.append(nodeName + "_frame = " + str(0) + "\n")
+                splitx = w / int(nodesJSON[o]["hframes"])
+                if "vframes" in nodesJSON[o]:
+                    splity = h / int(nodesJSON[o]["vframes"])
+                else:
+                    splity = h
+                print(str((fixedw * splitx) / 2), " ", splitx)
+                nodePosXDisplay = "(" + nodeName + "_position_x - camera_x) - " + str((splitx) / 2)
+                nodePosYDisplay = "(" + nodeName + "_position_y - camera_y) - " + str((splity) / 2)
+                nodePosScaleXDisplay = nodeName + "_scale_x"
+                nodePosScaleYDisplay = nodeName + "_scale_y"
+                nodePosTextureDisplay = nodeName + "_texture"
+                nodeFrameDisplay = nodeName + "_frame"
+                print(nodesJSON[o])
+                resourceCount = resourceCount + 1
+                resourceName = "res" + str(resourceCount)
+                resourcesCompilied.append(resourceName + " = " + "Sprite.new(" + renamedResourceIDs[texture] + ", " + str(splitx) + ", " + str(splity) + ", VRAM)")
+                nodesCompilied.append(tabs + resourceName + ":drawFrame(SCREEN_DOWN, " + nodePosXDisplay + ", " + nodePosYDisplay + ", " + nodeFrameDisplay + ")")
+                if extendScreen:
+                    nodesCompilied.append(tabs + "screen.blit(" + "SCREEN_UP" + ", " + nodePosXDisplay + " - 256, " + nodePosYDisplay + " - 192, " + nodePosTextureDisplay + ")")
+                nodesCompilied.append(tabs + "Image.scale(" + renamedResourceIDs[texture] + ", " + str(round(fixedw)) + " * " + str(nodePosScaleXDisplay) + ", " + str(round(fixedh))  + " * " + str(nodePosScaleYDisplay) + ")")
+                # nodesCompilied.append(tabs + "Image.scale(" + nodePosTextureDisplay + ", " + str(fixedw * scalex) + ", " + str(fixedh * scaley) + ")")
+            else:
+                nodePosXCompiled.append(nodeName + "_texture = " + str(renamedResourceIDs[texture]) + "\n")
+                nodePosXDisplay = "(" + nodeName + "_position_x - camera_x) - " + str((fixedw * scalex) / 2)
+                nodePosYDisplay = "(" + nodeName + "_position_y - camera_y) - " + str((fixedh * scaley) / 2)
+                nodePosScaleXDisplay = nodeName + "_scale_x"
+                nodePosScaleYDisplay = nodeName + "_scale_y"
+                nodePosTextureDisplay = nodeName + "_texture"
+                print(nodesJSON[o])
+                nodesCompilied.append(tabs + "screen.blit(" + "SCREEN_DOWN" + ", " + nodePosXDisplay + ", " + nodePosYDisplay + ", " + nodePosTextureDisplay + ")")
+                if extendScreen:
+                    nodesCompilied.append(tabs + "screen.blit(" + "SCREEN_UP" + ", " + nodePosXDisplay + " - 256, " + nodePosYDisplay + " - 192, " + nodePosTextureDisplay + ")")
+                # nodesCompilied.append(tabs + "Image.scale(" + nodePosTextureDisplay + ", " + str(round(fixedw)) + " * " + str(nodePosScaleXDisplay) + ", " + str(round(fixedh))  + " * " + str(nodePosScaleYDisplay) + ")")
+                nodesCompilied.append(tabs + "Image.scale(" + nodePosTextureDisplay + ", " + str(fixedw * scalex) + ", " + str(fixedh * scaley) + ")")
         if nodesJSON[o]["type"] == "Label":
             if "text" in nodesJSON[o]:
                 text = nodesJSON[o]["text"]
@@ -534,11 +599,29 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
             nodePosXCompiled.append(nodeName + "_position_x = " + str(x) + "\n")
             nodePosYCompiled.append(nodeName + "_position_y = " + str(y) + "\n")
             nodePosXCompiled.append(nodeName + "_text = " + str(text) + "\n")
-            nodePosXDisplay = "(" + nodeName + "_position_x + camera_x)"
-            nodePosYDisplay = "(" + nodeName + "_position_y + camera_y)"
+            nodePosXDisplay = "(" + nodeName + "_position_x - camera_x)"
+            nodePosYDisplay = "(" + nodeName + "_position_y - camera_y)"
             nodePosTextDisplay = nodeName + "_text"
             nodesCompilied.append(tabs + "screen.print(" + "SCREEN_DOWN" + ", " + nodePosXDisplay + ", " + nodePosYDisplay + ", " + nodePosTextDisplay + ", Color.new256(0, 0, 0))")
+        if nodesJSON[o]["type"] == "Camera2D":
+            if "position" in nodesJSON[o]:
+                position = nodesJSON[o]["position"][8:-1]
+            else:
+                position = "0, 0"
+            x = convertPosition(int(float(position.split(", ")[0])), 1152, 341, 42.5)
+            y = convertPosition(int(float(position.split(", ")[1])), 648, 192, 0)
+            nodePosXCompiled.append("camera_x = " + str(x) + "\n")
+            nodePosYCompiled.append("camera_y = " + str(y) + "\n")
         nodesCompilied.append("end")
+
+
+    for n in json.loads(fullJSON["convertedScene"])["nodes"]:
+        if json.loads(fullJSON["convertedScene"])["nodes"][n]["parent"] == "root":
+            rootNode = n
+    if "script" in json.loads(fullJSON["convertedScene"])["nodes"][rootNode]:
+        scriptPath = resourcesJSON[json.loads(fullJSON["convertedScene"])["nodes"][rootNode]["script"][13:-2]]["path"]
+        script = convertScript(gameFolder + "/" + scriptPath[6:len(scriptPath)], json.loads(fullJSON["convertedScene"])["nodes"][rootNode], nodesJSON)
+        print(script)
 
     # Put together the script
     with open(compiliedDirectory + "/index.lua", "a+") as f:
@@ -553,9 +636,6 @@ def compileGame(gameFolder, microLuaDirectory, Screen, convertMainScene, debugMo
         f.write("\n-- Node Positions\n")
         f.writelines(nodePosXCompiled)
         f.writelines(nodePosYCompiled)
-        f.write("\n-- Camera Position\n")
-        f.write("camera_x = 0\n")
-        f.write("camera_y = 0\n")
         f.write("\n-- Script Logic\n")
         if not script == []:
             for x in ["timer = Timer.new()\n", "timer:start()\n", "\n", "function sleep(a)\n", "\tsec = tonumber(timer:getTime() + a)\n", "\twhile (timer:getTime() < sec) do\n", "\tend\n", "end\n\n"]:
